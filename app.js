@@ -4,7 +4,6 @@ const port = process.env.PORT || 3000;
 const environment = process.env.NODE_ENV || 'development';
 
 let requestCount = 0;
-const startTime = Date.now();
 
 // Enhanced Web Server
 const server = http.createServer((req, res) => {
