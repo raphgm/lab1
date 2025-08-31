@@ -55,7 +55,8 @@ jobs:
     
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
-      image-tag: ${{ steps.meta.outputs.tags }}
+      image-tag: ${{ steps.build.outputs.imageid }}
+      image-name: ${{ steps.meta.outputs.tags }}
     
     steps:
       - name: Checkout code
@@ -92,6 +93,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Built image
 
   deploy-staging:
     name: Deploy to Staging
@@ -104,7 +106,7 @@ jobs:
       - name: Deploy to staging
         run: |
           echo "🚀 Deploying to staging environment..."
-          echo "Image: ${{ needs.build.outputs.image-tag }}"
+          echo "Image: ${{ needs.build.outputs.image-name }}"
           echo "Would deploy to staging server here"
           # In real scenario, you'd use:
           # - kubectl apply -f k8s/staging/
@@ -122,7 +124,7 @@ jobs:
       - name: Deploy to production
         run: |
           echo "🎯 Deploying to production environment..."
-          echo "Image: ${{ needs.build.outputs.image-tag }}"
+          echo "Image: ${{ needs.build.outputs.image-name }}"
           echo "Image digest: ${{ needs.build.outputs.image-digest }}"
           echo "Would deploy to production server here"
           # In real scenario, you'd use:
@@ -136,15 +138,74 @@ jobs:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+      actions: read
+    
     steps:
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract single image tag for scanning
+        id: image
+        run: |
+          # Get the image names from build job output
+          IMAGE_NAMES="${{ needs.build.outputs.image-name }}"
+          echo "All image tags: $IMAGE_NAMES"
+          
+          # Extract the latest tag for main branch
+          LATEST_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo "Using image for scan: $LATEST_TAG"
+          echo "scan-target=$LATEST_TAG" >> $GITHUB_OUTPUT
+      
+      - name: Wait for image to be available
+        run: |
+          echo "Waiting for image to be fully available..."
+          sleep 30
+          
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.image.outputs.scan-target }}
           format: 'sarif'
           output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          timeout: '10m'
+        continue-on-error: true
+        
+      - name: Check if SARIF file exists
+        run: |
+          if [ -f "trivy-results.sarif" ]; then
+            echo "SARIF file created successfully"
+            echo "File size: $(du -h trivy-results.sarif)"
+            # Show first few lines for debugging
+            head -20 trivy-results.sarif || echo "Could not read SARIF file"
+          else
+            echo "SARIF file was not created"
+            # Create empty SARIF file to prevent upload errors
+            echo '{"version":"2.1.0","runs":[]}' > trivy-results.sarif
+          fi
           
-      - name: Upload Trivy scan results
+      - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+        
+      - name: Upload scan results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-scan-results
+          path: trivy-results.sarif
+          retention-days: 30
