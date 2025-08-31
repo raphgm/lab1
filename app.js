@@ -150,3 +150,12 @@ server.listen(port, () => {
 
 // Export server for testing
 module.exports = server;
+
+// name: Run Trivy vulnerability scanner
+// uses: aquasecurity/trivy-action@0.24.0
+// with:
+// image-ref: ghcr.io/raphgm/lab1:main
+// format: 'sarif'
+// output: 'trivy-results.sarif'
+// severity: 'CRITICAL,HIGH'
+// continue-on-error: true
