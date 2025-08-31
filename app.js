@@ -150,3 +150,19 @@ server.listen(port, () => {
 
 // Export server for testing
 module.exports = server;
+
+// Upload Trivy scan results
+if (process.env.GITHUB_ACTIONS) {
+  const { exec } = require('child_process');
+  exec('trivy image --format sarif --output trivy-results.sarif your-docker-image:latest', (err, stdout, stderr) => {
+    if (err) {
+      console.error(`Error executing Trivy: ${err.message}`);
+      return;
+    }
+    if (stderr) {
+      console.error(`Trivy STDERR: ${stderr}`);
+      return;
+    }
+    console.log(`Trivy scan completed: ${stdout}`);
+  });
+}
